@@ -141,7 +141,8 @@ module.exports = function (classes) {
 
           // Check for the required fields, and if they aren't there, then
           // dispatch to the handleHttpError function.
-          if (!(decoded.method && decoded.params && decoded.id)) {
+          // Some RPC libs allow 0 to be a decoded.id, so we should handle it.
+          if (!(decoded.method && decoded.params && (typeof decoded.id != 'undefined'))) {
             Endpoint.trace('-->', 'Response (invalid request)');
             Server.handleHttpError(req, res, new Error.InvalidRequest(INVALID_REQUEST), self.opts.headers);
             return;
