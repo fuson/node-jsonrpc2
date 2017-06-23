@@ -4,6 +4,7 @@ module.exports = function (classes){
   var
     net = require('net'),
     http = require('http'),
+    https = require('https'),
     WebSocket = classes.Websocket,
     JsonParser = require('jsonparse'),
     EventEmitter = classes.EventEmitter,
@@ -15,8 +16,8 @@ module.exports = function (classes){
      * JSON-RPC Client.
      */
       Client = Endpoint.$define('Client', {
-      construct    : function (port, host, user, password){
-        this.$super();
+      construct    : function ($super, port, host, user, password){
+        $super();
 
         this.port = port;
         this.host = host;
@@ -45,12 +46,18 @@ module.exports = function (classes){
         var id = 1, self = this;
 
         // First we encode the request into JSON
-        var requestJSON = JSON.stringify({
-          'id'     : id,
-          'method' : method,
-          'params' : params,
-          'jsonrpc': '2.0'
-        });
+        var req;
+
+        if (method instanceof Array && params instanceof Array) {
+            req = [];
+            // Loop through the shortest array, for multiple calls
+            for (var q =0; q < (Math.min(method.length,params.length)); q++){
+                req.push({'id': q, 'method' : method[q], 'params' : params[q], 'jsonrpc': '2.0'});
+            }
+        } else {
+            req = {'id': id, 'method' : method, 'params' : params, 'jsonrpc': '2.0'};
+        }
+        var requestJSON = JSON.stringify(req);
 
         var headers = {};
 
@@ -68,8 +75,16 @@ module.exports = function (classes){
           method  : 'POST',
           headers : headers
         };
+        var request;
+        if(opts.https === true) {
+          if(opts.rejectUnauthorized !== undefined) {
+            options.rejectUnauthorized = opts.rejectUnauthorized;
+          }
+          request = https.request(options);
+        } else {
+          request = http.request(options);
+        }
 
-        var request = http.request(options);
 
         // Report errors from the http client. This also prevents crashes since
         // an exception is thrown if we don't handle this event.
@@ -276,7 +291,64 @@ module.exports = function (classes){
             }
           });
         });
-      }
+      },
+      multi_call         : function (calls, opts, callback){
+          // Calls object to be array of object in format [{"method": "method1", "params": ["params1"]}]
+          if (_.isFunction(opts)) {
+              callback = opts;
+              opts = {};
+          }
+          opts = opts || {};
+          calls = calls || [];
+          var methods = [], params = [];
+          for (var c = 0; c < calls.length; c++){
+              var call = calls[c] || {};
+              methods.push(call.method);
+              params.push(call.params);
+              EventEmitter.trace('-->', 'Http call (method ' + call.method + '): ' + JSON.stringify(call.params));
+          }
+          this.connectHttp(methods, params, opts, function connectHttp(id, request, response){
+            // Check if response object exists.
+            if (!response) {
+              callback(new Error('Have no response object'));
+              return;
+            }
+
+            var data = '';
+
+            response.on('data', function responseData(chunk){
+                data += chunk;
+            });
+
+            response.on('end', function responseEnd(){
+                if (response.statusCode !== 200) {
+                    callback(new Error('"' + response.statusCode + '"' + data))
+                    ;
+                    return;
+                }
+                var decoded = JSON.parse(data);
+                if (_.isFunction(callback)) {
+                    var return_error = null;
+                    if (decoded instanceof Array && decoded.length) {
+                        for (var d in decoded){
+                            if (decoded[d] && !decoded[d].error){
+                                decoded[d].error = null;
+                            } else {
+                                if(!return_error){
+                                    return_error = [];
+                                }
+                                return_error.push(decoded[d].error)
+                            }
+                        }
+                        callback(return_error, decoded);
+                    } else {
+                        callback(new Error('Have no response object'));
+                        return;
+                    }
+                }
+            });
+          });
+        }
     });
 
   return Client;
