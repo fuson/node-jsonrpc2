@@ -75,6 +75,9 @@ module.exports = function (classes){
           method  : 'POST',
           headers : headers
         };
+        if (opts.agent) {
+            options.agent = opts.agent;
+        }
         var request;
         if(opts.https === true) {
           if(opts.rejectUnauthorized !== undefined) {
